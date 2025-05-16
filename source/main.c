@@ -6,10 +6,12 @@
 #include <pngu.h>
 #include <gccore.h>
 #include <tpl.h>
+
 typedef unsigned char PNGU_u8;
 typedef unsigned short PNGU_u16;
 typedef unsigned int PNGU_u32;
 typedef unsigned long long PNGU_u64;
+
 int PNGU_DecodeToRGBA8 (IMGCTX ctx, PNGU_u32 width, PNGU_u32 height, void *buffer, PNGU_u32 stride, PNGU_u8 default_alpha);
 
 #include <sys/stat.h>
@@ -17,14 +19,24 @@ int PNGU_DecodeToRGBA8 (IMGCTX ctx, PNGU_u32 width, PNGU_u32 height, void *buffe
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#define PNGU_OK							0
+
+#define PNGU_OK 0
+
 #include "LogoN64.h"
+#include "LogoSNES.tpl"  // You should add this to your project folder or embedded resource
 #include "Back_a.h"
 #include "icon_brlyt.h"
 #include "pointer.png.h"
 #include "font.ttf.h"
 
 #define MAX_FILES 1024
+
+typedef enum {
+    CONSOLE_N64,
+    CONSOLE_SNES
+} ConsoleType;
+
+ConsoleType console_type = CONSOLE_N64;  // default, change as needed
 
 typedef struct {
     int active;
@@ -86,9 +98,8 @@ void convert_png_to_tpl(const char *full_path) {
     mkdir("meta/arc/timg", 0777);
     mkdir("meta/arc/anim", 0777);
 
-    // Handle SNES-specific static logo
+    // SNES: copy static LogoSNES.tpl instead of converting PNG
     if (console_type == CONSOLE_SNES) {
-        // Copy LogoSNES.tpl directly (retain file name)
         FILE *src = fopen("LogoSNES.tpl", "rb");
         if (src) {
             FILE *dst = fopen("meta/arc/timg/LogoSNES.tpl", "wb");
@@ -102,10 +113,10 @@ void convert_png_to_tpl(const char *full_path) {
             }
             fclose(src);
         }
-        return;  // Done — skip PNGU conversion
+        return;  // Skip PNG conversion
     }
 
-    // Convert PNG to TPL (N64 or general case)
+    // N64 or others: convert PNG to TPL RGB565
     PNGUPROP prop;
     IMGCTX ctx = PNGU_SelectImageFromDevice(full_path);
     if (!ctx || PNGU_GetImageProperties(ctx, &prop) != PNGU_OK) {
@@ -124,42 +135,34 @@ void convert_png_to_tpl(const char *full_path) {
         const char *filename = strrchr(full_path, '/');
         snprintf(output_path, sizeof(output_path), "meta/arc/timg/%s.tpl", filename ? filename + 1 : full_path);
 
-        FILE *out = fopen(output_path, "wb");
-        if (out) {
-            // Convert RGBA to RGB565
-            size_t num_pixels = prop.imgWidth * prop.imgHeight;
-            u16 *rgb565_data = (u16 *)malloc(num_pixels * sizeof(u16));
-            if (!rgb565_data) {
-                free(img_data);
-                PNGU_CloseImage(ctx);
-                return;
-            }
+        size_t num_pixels = prop.imgWidth * prop.imgHeight;
+        u16 *rgb565_data = (u16 *)malloc(num_pixels * sizeof(u16));
+        if (!rgb565_data) {
+            free(img_data);
+            PNGU_CloseImage(ctx);
+            return;
+        }
 
         for (size_t i = 0; i < num_pixels; i++) {
-        u8 r = (img_data[i] >> 24) & 0xFF;
-        u8 g = (img_data[i] >> 16) & 0xFF;
-        u8 b = (img_data[i] >> 8) & 0xFF;
+            u8 r = (img_data[i] >> 24) & 0xFF;
+            u8 g = (img_data[i] >> 16) & 0xFF;
+            u8 b = (img_data[i] >> 8) & 0xFF;
 
-        rgb565_data[i] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-    }
+            rgb565_data[i] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+        }
 
-    // Write RGB565 to file
-    FILE *out = fopen(output_path, "wb");
-    if (out) {
-        fwrite(rgb565_data, 2, num_pixels, out);
-        fclose(out);
-    }
-
+        FILE *out = fopen(output_path, "wb");
+        if (out) {
+            fwrite(rgb565_data, 2, num_pixels, out);
             fclose(out);
         }
+
+        free(rgb565_data);
     }
 
-    free(rgb565_data);
     free(img_data);
     PNGU_CloseImage(ctx);
-
-  }
-
+}
 
 GRRLIB_texImg* LoadTPLToGRRLIB(const u8 *tpl_data, u32 tpl_size) {
     TPLFile tpl;
