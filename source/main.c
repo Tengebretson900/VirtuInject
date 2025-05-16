@@ -86,6 +86,26 @@ void convert_png_to_tpl(const char *full_path) {
     mkdir("meta/arc/timg", 0777);
     mkdir("meta/arc/anim", 0777);
 
+    // Handle SNES-specific static logo
+    if (console_type == CONSOLE_SNES) {
+        // Copy LogoSNES.tpl directly (retain file name)
+        FILE *src = fopen("LogoSNES.tpl", "rb");
+        if (src) {
+            FILE *dst = fopen("meta/arc/timg/LogoSNES.tpl", "wb");
+            if (dst) {
+                char buf[4096];
+                size_t bytes;
+                while ((bytes = fread(buf, 1, sizeof(buf), src)) > 0) {
+                    fwrite(buf, 1, bytes, dst);
+                }
+                fclose(dst);
+            }
+            fclose(src);
+        }
+        return;  // Done — skip PNGU conversion
+    }
+
+    // Convert PNG to TPL (N64 or general case)
     PNGUPROP prop;
     IMGCTX ctx = PNGU_SelectImageFromDevice(full_path);
     if (!ctx || PNGU_GetImageProperties(ctx, &prop) != PNGU_OK) {
@@ -94,7 +114,10 @@ void convert_png_to_tpl(const char *full_path) {
     }
 
     u32 *img_data = memalign(32, prop.imgWidth * prop.imgHeight * 4);
-    if (!img_data) return;
+    if (!img_data) {
+        PNGU_CloseImage(ctx);
+        return;
+    }
 
     if (PNGU_DecodeToRGBA8(ctx, prop.imgWidth, prop.imgHeight, img_data, 0, 0) == PNGU_OK) {
         char output_path[1024];
@@ -103,14 +126,40 @@ void convert_png_to_tpl(const char *full_path) {
 
         FILE *out = fopen(output_path, "wb");
         if (out) {
-            fwrite(img_data, 1, prop.imgWidth * prop.imgHeight * 4, out);
+            // Convert RGBA to RGB565
+            size_t num_pixels = prop.imgWidth * prop.imgHeight;
+            u16 *rgb565_data = (u16 *)malloc(num_pixels * sizeof(u16));
+            if (!rgb565_data) {
+                free(img_data);
+                PNGU_CloseImage(ctx);
+                return;
+            }
+
+        for (size_t i = 0; i < num_pixels; i++) {
+        u8 r = (img_data[i] >> 24) & 0xFF;
+        u8 g = (img_data[i] >> 16) & 0xFF;
+        u8 b = (img_data[i] >> 8) & 0xFF;
+
+        rgb565_data[i] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    }
+
+    // Write RGB565 to file
+    FILE *out = fopen(output_path, "wb");
+    if (out) {
+        fwrite(rgb565_data, 2, num_pixels, out);
+        fclose(out);
+    }
+
             fclose(out);
         }
     }
 
+    free(rgb565_data);
     free(img_data);
     PNGU_CloseImage(ctx);
-}
+
+  }
+
 
 GRRLIB_texImg* LoadTPLToGRRLIB(const u8 *tpl_data, u32 tpl_size) {
     TPLFile tpl;
