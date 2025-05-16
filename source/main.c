@@ -22,13 +22,6 @@ int PNGU_DecodeToRGBA8 (IMGCTX ctx, PNGU_u32 width, PNGU_u32 height, void *buffe
 
 #define PNGU_OK 0
 
-#include "LogoN64.h"
-#include "LogoSNES.tpl"  // You should add this to your project folder or embedded resource
-#include "Back_a.h"
-#include "icon_brlyt.h"
-#include "pointer.png.h"
-#include "font.ttf.h"
-
 #define MAX_FILES 1024
 
 typedef enum {
@@ -58,8 +51,8 @@ FileEntry files[MAX_FILES];
 int file_count = 0;
 char current_path[1024] = "/";
 
-GRRLIB_texImg *pointerTex;
-GRRLIB_ttfFont *font;
+GRRLIB_texImg *pointerTex = NULL;
+GRRLIB_ttfFont *font = NULL;
 GRRLIB_texImg *backTex = NULL;
 GRRLIB_texImg *logoTex = NULL;
 
@@ -164,12 +157,33 @@ void convert_png_to_tpl(const char *full_path) {
     PNGU_CloseImage(ctx);
 }
 
-GRRLIB_texImg* LoadTPLToGRRLIB(const u8 *tpl_data, u32 tpl_size) {
+GRRLIB_texImg* LoadTPLFromFile(const char *filepath) {
+    FILE *f = fopen(filepath, "rb");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    u8 *buffer = malloc(size);
+    if (!buffer) {
+        fclose(f);
+        return NULL;
+    }
+
+    fread(buffer, 1, size, f);
+    fclose(f);
+
     TPLFile tpl;
     GXTexObj tex;
-
-    TPL_OpenTPLFromMemory(&tpl, (void*)tpl_data, tpl_size);
-    TPL_GetTexture(&tpl, 0, &tex);
+    if (TPL_OpenTPLFromMemory(&tpl, buffer, size) != 0) {
+        free(buffer);
+        return NULL;
+    }
+    if (TPL_GetTexture(&tpl, 0, &tex) != 0) {
+        free(buffer);
+        return NULL;
+    }
 
     GRRLIB_texImg *grr_tex = (GRRLIB_texImg *)malloc(sizeof(GRRLIB_texImg));
     memset(grr_tex, 0, sizeof(GRRLIB_texImg));
@@ -180,6 +194,7 @@ GRRLIB_texImg* LoadTPLToGRRLIB(const u8 *tpl_data, u32 tpl_size) {
     grr_tex->tilew  = grr_tex->w;
     grr_tex->tileh  = grr_tex->h;
 
+    free(buffer);
     return grr_tex;
 }
 
@@ -190,12 +205,14 @@ int main() {
     GRRLIB_Init();
     GRRLIB_InitTTF();
 
-    pointerTex = GRRLIB_LoadTexture(pointer_png);
-    GRRLIB_SetHandle(pointerTex, pointerTex->w / 2, pointerTex->h / 2);
-    font = GRRLIB_LoadTTF(font_ttf, font_ttf_size);
+    pointerTex = LoadTPLFromFile("pointer.png.tpl");  // Load from file instead of embedded
+    if (pointerTex)
+        GRRLIB_SetHandle(pointerTex, pointerTex->w / 2, pointerTex->h / 2);
 
-    backTex = LoadTPLToGRRLIB(Back_a_tpl, Back_a_tpl_size);
-    logoTex = LoadTPLToGRRLIB(LogoN64_tpl, LogoN64_tpl_size);
+    font = GRRLIB_LoadTTF_File("font.ttf");  // You'll need to implement GRRLIB_LoadTTF_File if not existing
+
+    backTex = LoadTPLFromFile("Back_a.tpl");
+    logoTex = LoadTPLFromFile("LogoN64.tpl");
     int banner_played = 0;
 
     list_dir(current_path);
@@ -247,7 +264,8 @@ int main() {
         if (logoTex)
             GRRLIB_DrawImg(300, 380, logoTex, 0, 0.5, 0.5, 0xFFFFFFFF);
 
-        GRRLIB_DrawImg(ir.x, ir.y, pointerTex, 0, 1, 1, 0xFFFFFFFF);
+        if (pointerTex)
+            GRRLIB_DrawImg(ir.x, ir.y, pointerTex, 0, 1, 1, 0xFFFFFFFF);
 
         if (preview.active) {
             float t = (float)preview.frame / preview.total_frames;
@@ -281,9 +299,9 @@ int main() {
     }
 
     GRRLIB_FreeTTF(font);
-    GRRLIB_FreeTexture(pointerTex);
-    free(backTex);
-    free(logoTex);
+    if (pointerTex) GRRLIB_FreeTexture(pointerTex);
+    if (backTex) free(backTex);
+    if (logoTex) free(logoTex);
     GRRLIB_Exit();
     return 0;
 }
